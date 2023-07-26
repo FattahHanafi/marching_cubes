@@ -1,9 +1,0 @@
-cmake_minimum_required(VERSION 3.26.4)
-set(CMAKE_BUILD_TYPE Release)
-set(PROPERTY CXX_STANDARD 23)
-
-project(Vec3)
-
-add_library(${PROJECT_NAME} STATIC Vec3.hpp)
-set_target_properties(${PROJECT_NAME} PROPERTIES PUBLIC_HEADER Vec3.hpp LINKER_LANGUAGE CXX)
-install(TARGETS ${PROJECT_NAME} LIBRARY DESTINATION lib PUBLIC_HEADER DESTINATION include)
