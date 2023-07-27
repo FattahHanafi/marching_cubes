@@ -10,6 +10,9 @@ project(test LANGUAGES CXX CUDA)
 add_library(Vec3 include/Vec3.hpp)
 set_target_properties(Vec3 PROPERTIES LINKER_LANGUAGE CXX)
 
+add_library(Timer include/timer.hpp)
+set_target_properties(Timer PROPERTIES LINKER_LANGUAGE CXX)
+
 find_package(CUDAToolkit REQUIRED)
 
 add_library(MarchingCubes include/marching_cubes.cu include/marching_cubes.hpp)
@@ -17,4 +20,4 @@ set_target_properties(MarchingCubes PROPERTIES LINKER_LANGUAGE CUDA)
 target_link_libraries(MarchingCubes PRIVATE cuda cudart)
 
 add_executable(${PROJECT_NAME} src/main.cpp)
-target_link_libraries(${PROJECT_NAME} PRIVATE MarchingCubes)
+target_link_libraries(${PROJECT_NAME} PRIVATE MarchingCubes Timer)
