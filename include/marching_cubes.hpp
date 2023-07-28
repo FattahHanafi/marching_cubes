@@ -17,7 +17,8 @@ class MarchingCubes {
   void set_vertex(Vec3<uint32_t>* index, bool value);
   void set_heights_gpu(double height);
   void update_vertices_gpu();
-  void update_cubes();
+  void update_cubes_gpu();
+  double update_volumes_gpu();
   // void set_vertices(Vec3<uint32_t>* index, uint32_t len);
   void print();
   bool get_vertex(const size_t i) const;
@@ -36,6 +37,8 @@ class MarchingCubes {
   thrust::device_vector<bool> d_vertices;
   thrust::device_vector<uint8_t> d_cubes;
   thrust::device_vector<double> d_heights;
+  thrust::device_vector<double> d_volumes;
+  thrust::device_vector<double> d_const_volumes;
 
   cudaError_t m_cudaStat;
   cublasStatus_t m_stat;

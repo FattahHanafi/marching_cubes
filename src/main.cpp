@@ -13,20 +13,20 @@
 int main() {
   MarchingCubes mc = MarchingCubes(X, Y, Z, 2.0);
 
-  for (uint32_t i = 0; i < 1000; ++i) {
+  for (uint32_t i = 0; i < 100000; ++i) {
+    Timer t("Total ", TimeUnit::TIME_UNIT_μS);
     {
-      Timer t("set height", TimeUnit::TIME_UNIT_μS);
+      // Timer t("set height", TimeUnit::TIME_UNIT_μS);
       mc.set_heights_gpu(1.1);
     }
 
     {
-      Timer t("update vertices", TimeUnit::TIME_UNIT_μS);
-      // mc.update_vertices_gp();
+      // Timer t("build cubes", TimeUnit::TIME_UNIT_μS);
+      mc.update_cubes_gpu();
     }
-
     {
-      Timer t("update cubes", TimeUnit::TIME_UNIT_μS);
-      // mc.update_cubes();
+      // Timer t("updating volumes", TimeUnit::TIME_UNIT_μS);
+      mc.update_volumes_gpu();
     }
   }
 }
