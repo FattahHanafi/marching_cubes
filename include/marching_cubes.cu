@@ -2,11 +2,19 @@
 #include <cuda_device_runtime_api.h>
 #include <cuda_runtime_api.h>
 #include <sys/types.h>
+#include <thrust/copy.h>
+#include <thrust/count.h>
+#include <thrust/detail/copy.h>
 #include <thrust/detail/raw_pointer_cast.h>
 #include <thrust/device_vector.h>
 #include <thrust/execution_policy.h>
 #include <thrust/fill.h>
+#include <thrust/functional.h>
+#include <thrust/iterator/counting_iterator.h>
+#include <thrust/iterator/permutation_iterator.h>
+#include <thrust/iterator/transform_iterator.h>
 #include <thrust/reduce.h>
+#include <vector_types.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -14,10 +22,60 @@
 #include <cstring>
 #include <iostream>
 #include <iterator>
+#include <numeric>
 #include <ostream>
 #include <vector>
 
 #include "marching_cubes.hpp"
+
+template <typename Iterator>
+class strided_range {
+ public:
+  typedef typename thrust::iterator_difference<Iterator>::type difference_type;
+
+  struct stride_functor
+      : public thrust::unary_function<difference_type, difference_type> {
+    difference_type stride;
+
+    stride_functor(difference_type stride) : stride(stride) {}
+
+    __host__ __device__ difference_type
+    operator()(const difference_type& i) const {
+      return stride * i;
+    }
+  };
+
+  typedef typename thrust::counting_iterator<difference_type> CountingIterator;
+  typedef typename thrust::transform_iterator<stride_functor, CountingIterator>
+      TransformIterator;
+  typedef typename thrust::permutation_iterator<Iterator, TransformIterator>
+      PermutationIterator;
+
+  // type of the strided_range iterator
+  typedef PermutationIterator iterator;
+
+  // construct strided_range for the range [first,last)
+  strided_range(Iterator first, Iterator last, difference_type stride)
+      : first(first), last(last), stride(stride) {}
+
+  iterator begin(void) const {
+    return PermutationIterator(
+        first, TransformIterator(CountingIterator(0), stride_functor(stride)));
+  }
+
+  iterator end(void) const {
+    return begin() + ((last - first) + (stride - 1)) / stride;
+  }
+
+ protected:
+  Iterator first;
+  Iterator last;
+  difference_type stride;
+};
+
+struct is_non_zero {
+  __device__ bool operator()(const float x) { return (x > 0.0); }
+};
 
 __global__ void d_update_vertices(bool* d_vertices, double* d_heights,
                                   const double size) {
@@ -56,10 +114,93 @@ __global__ void d_update_cubes(uint8_t* d_cubes, bool* d_vertices) {
 }
 
 __global__ void d_update_volumes(double* d_volumes, const uint8_t* d_cubes,
-                                 const double* d_const_volumes) {
+                                 const double* d_mc_volumes,
+                                 const double cube_volume) {
   uint32_t cube_idx = blockIdx.x * gridDim.y * blockDim.x +
                       blockIdx.y * blockDim.x + threadIdx.x;
-  d_volumes[cube_idx] = d_volumes[d_cubes[cube_idx]];
+  d_volumes[cube_idx] = d_mc_volumes[d_cubes[cube_idx]] * cube_volume;
+}
+
+__global__ void d_update_triangles(float* d_triangles, const uint8_t* d_cubes,
+                                   int8_t* d_mc_triangles, const double x_size,
+                                   const double y_size, const double z_size) {
+  uint32_t cube_idx = blockIdx.x * gridDim.y * blockDim.x +
+                      blockIdx.y * blockDim.x + threadIdx.x;
+  const uint8_t cube_type = d_cubes[cube_idx];
+
+  int8_t* v = &d_mc_triangles[cube_type * 16];
+  float x = x_size;
+  float y = y_size;
+  float z = z_size;
+  uint8_t j = 0;
+  while (v[j] != -1) {
+    switch (v[j]) {
+      case 0:
+        x *= 0.5;
+        y *= 0.0;
+        z *= 0.0;
+        break;
+      case 1:
+        x *= 1.0;
+        y *= 0.5;
+        z *= 0.0;
+        break;
+      case 2:
+        x *= 0.5;
+        y *= 1.0;
+        z *= 0.0;
+        break;
+      case 3:
+        x *= 0.0;
+        y *= 0.5;
+        z *= 0.0;
+        break;
+      case 4:
+        x *= 0.5;
+        y *= 0.0;
+        z *= 1.0;
+        break;
+      case 5:
+        x *= 1.0;
+        y *= 0.5;
+        z *= 1.0;
+        break;
+      case 6:
+        x *= 0.5;
+        y *= 1.0;
+        z *= 1.0;
+        break;
+      case 7:
+        x *= 0.0;
+        y *= 0.5;
+        z *= 1.0;
+        break;
+      case 8:
+        x *= 0.0;
+        y *= 0.0;
+        z *= 0.5;
+        break;
+      case 9:
+        x *= 1.0;
+        y *= 0.0;
+        z *= 0.5;
+        break;
+      case 10:
+        x *= 1.0;
+        y *= 1.0;
+        z *= 0.5;
+        break;
+      case 11:
+        x *= 0.0;
+        y *= 1.0;
+        z *= 0.5;
+        break;
+    }
+    d_triangles[cube_idx * 5 * 3 * 3 + j * 3 + 0] = blockIdx.x * x_size + x;
+    d_triangles[cube_idx * 5 * 3 * 3 + j * 3 + 1] = blockIdx.y * y_size + y;
+    d_triangles[cube_idx * 5 * 3 * 3 + j * 3 + 2] = threadIdx.x * z_size + z;
+    j++;
+  }
 }
 
 MarchingCubes::MarchingCubes(const uint32_t x_count, const uint32_t y_count,
@@ -71,44 +212,28 @@ MarchingCubes::MarchingCubes(const uint32_t x_count, const uint32_t y_count,
   d_cubes.resize(x_count * y_count * z_count);
   d_heights.resize((x_count + 1) * (y_count + 1));
   d_volumes.resize(x_count * y_count * z_count);
-  d_const_volumes.resize(256);
+  d_triangles.resize(
+      m_count.x * m_count.y * m_count.z * 5 * 3 *
+      3);  // up to 5 faces each containing 3 vertices each containg x,y,z
+
+  d_mc_volumes.resize(m_mc_volumes.size());
+  thrust::copy(m_mc_volumes.cbegin(), m_mc_volumes.cend(), d_mc_volumes.data());
+  m_mc_volumes.clear();
+  m_mc_volumes.shrink_to_fit();
+
+  d_mc_triangles.resize(m_mc_triangles.size());
+  thrust::copy(m_mc_triangles.begin(), m_mc_triangles.end(),
+               d_mc_triangles.data());
+  m_mc_triangles.clear();
+  m_mc_triangles.shrink_to_fit();
 
   thrust::fill(d_heights.begin(), d_heights.end(), 0.0f);
   thrust::fill(d_vertices.begin(), d_vertices.end(), false);
   thrust::fill(d_cubes.begin(), d_cubes.end(), 0);
   thrust::fill(d_volumes.begin(), d_volumes.end(), 0.0);
-  thrust::fill(d_volumes.begin(), d_volumes.end(), 0.5);  // UPDATE Values
 }
 
 MarchingCubes::~MarchingCubes() {}
-
-void MarchingCubes::set_vertex(Vec3<uint32_t>* index, bool value) {
-  uint32_t idx = vertex2idx(index);
-  m_vertices->at(idx) = value;
-}
-
-uint32_t MarchingCubes::add() {
-  return thrust::reduce(thrust::device, d_vertices.begin(), d_vertices.end(),
-                        0);
-}
-
-bool MarchingCubes::get_vertex(const size_t i) const {
-  return m_vertices->at(i);
-}
-
-size_t MarchingCubes::vertex2idx(const Vec3<uint32_t>* index) const {
-  size_t idx = index->z;
-  idx += index->y * (m_count.z + 1);
-  idx += index->x * (m_count.z + 1) * (m_count.y + 1);
-  return idx;
-}
-
-size_t MarchingCubes::cube2idx(const Vec3<uint32_t>* index) const {
-  size_t idx = index->z;
-  idx += index->y * m_count.z;
-  idx += index->x * m_count.z * m_count.y;
-  return idx;
-}
 
 void MarchingCubes::set_heights_gpu(double height) {
   thrust::fill(d_heights.begin(), d_heights.end(), height);
@@ -118,15 +243,16 @@ double MarchingCubes::update_volumes_gpu() {
   d_update_volumes<<<dim3(m_count.x, m_count.y, 1), m_count.z>>>(
       thrust::raw_pointer_cast(d_volumes.data()),
       thrust::raw_pointer_cast(d_cubes.data()),
-      thrust::raw_pointer_cast(d_const_volumes.data()));
+      thrust::raw_pointer_cast(d_mc_volumes.data()), m_cube_size.x);
   cudaDeviceSynchronize();
-  return thrust::reduce(d_volumes.begin(), d_volumes.end(), 0.0);
+  return thrust::reduce(d_volumes.begin(), d_volumes.end(), double(0));
 }
 
 void MarchingCubes::update_vertices_gpu() {
   d_update_vertices<<<dim3(m_count.x + 1, m_count.y + 1, 1), m_count.z + 1>>>(
       thrust::raw_pointer_cast(d_vertices.data()),
-      thrust::raw_pointer_cast(d_heights.data()), m_cube_size.z);
+      thrust::raw_pointer_cast(d_heights.data()),
+      m_cube_size.x * m_cube_size.y * m_cube_size.z);
   cudaDeviceSynchronize();
 }
 
@@ -137,8 +263,25 @@ void MarchingCubes::update_cubes_gpu() {
   cudaDeviceSynchronize();
 }
 
-void MarchingCubes::print() {
-  m_size.print();
-  m_cube_size.print();
-  m_size.print();
+void MarchingCubes::update_triangles_gpu() {
+  d_update_triangles<<<dim3(m_count.x, m_count.y, 1), m_count.z>>>(
+      thrust::raw_pointer_cast(d_triangles.data()),
+      thrust::raw_pointer_cast(d_cubes.data()),
+      thrust::raw_pointer_cast(d_mc_triangles.data()), m_cube_size.x,
+      m_cube_size.y, m_cube_size.z);
+  cudaDeviceSynchronize();
+}
+
+void MarchingCubes::shrink_triangles_gpu() {
+  auto s = thrust::count_if(thrust::device, d_triangles.cbegin(),
+                            d_triangles.cend(), is_non_zero());
+  d_triangles_shrinked.resize(s);
+  thrust::copy_if(thrust::device, d_triangles.cbegin(), d_triangles.cend(),
+                  d_triangles_shrinked.begin(), is_non_zero());
+}
+
+void MarchingCubes::copy_triangles_from_gpu() {
+  h_triangles_shrinked.resize(d_triangles_shrinked.size());
+  thrust::copy(d_triangles_shrinked.cbegin(), d_triangles_shrinked.cend(),
+               h_triangles_shrinked.begin());
 }

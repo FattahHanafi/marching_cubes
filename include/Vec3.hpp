@@ -9,8 +9,4 @@ class Vec3 {
   T z = T(0);
 
   Vec3(T x, T y, T z) : x(x), y(y), z(z) {}
-
-  void print() const {
-    std::cout << "x : " << x << ", y : " << y << ", z : " << z << std::endl;
-  }
 };
