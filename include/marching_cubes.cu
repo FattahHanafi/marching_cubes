@@ -14,7 +14,6 @@
 #include <thrust/iterator/permutation_iterator.h>
 #include <thrust/iterator/transform_iterator.h>
 #include <thrust/reduce.h>
-#include <vector_types.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -22,60 +21,30 @@
 #include <cstring>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <numeric>
 #include <ostream>
 #include <vector>
 
+#define IDX2C(i, j, ld) (((j) * (ld)) + (i))
+#include <cuda_runtime.h>
+
+#include "cublas_v2.h"
+#define M 6
+#define N 5
+
 #include "marching_cubes.hpp"
 
-template <typename Iterator>
-class strided_range {
- public:
-  typedef typename thrust::iterator_difference<Iterator>::type difference_type;
-
-  struct stride_functor
-      : public thrust::unary_function<difference_type, difference_type> {
-    difference_type stride;
-
-    stride_functor(difference_type stride) : stride(stride) {}
-
-    __host__ __device__ difference_type
-    operator()(const difference_type& i) const {
-      return stride * i;
-    }
-  };
-
-  typedef typename thrust::counting_iterator<difference_type> CountingIterator;
-  typedef typename thrust::transform_iterator<stride_functor, CountingIterator>
-      TransformIterator;
-  typedef typename thrust::permutation_iterator<Iterator, TransformIterator>
-      PermutationIterator;
-
-  // type of the strided_range iterator
-  typedef PermutationIterator iterator;
-
-  // construct strided_range for the range [first,last)
-  strided_range(Iterator first, Iterator last, difference_type stride)
-      : first(first), last(last), stride(stride) {}
-
-  iterator begin(void) const {
-    return PermutationIterator(
-        first, TransformIterator(CountingIterator(0), stride_functor(stride)));
-  }
-
-  iterator end(void) const {
-    return begin() + ((last - first) + (stride - 1)) / stride;
-  }
-
- protected:
-  Iterator first;
-  Iterator last;
-  difference_type stride;
+struct is_valid {
+  __device__ bool operator()(const float x) { return (x > 0); }
 };
 
-struct is_non_zero {
-  __device__ bool operator()(const float x) { return (x > 0.0); }
-};
+__global__ void d_set_zero(float* d_triangles) {
+  uint32_t idx = 15 * (blockIdx.x * gridDim.x * blockDim.x);
+  for (uint32_t i = 0; i < 15; ++i) {
+    d_triangles[idx + i] = 0.0f;
+  }
+}
 
 __global__ void d_update_vertices(bool* d_vertices, double* d_heights,
                                   const double size) {
@@ -121,7 +90,9 @@ __global__ void d_update_volumes(double* d_volumes, const uint8_t* d_cubes,
   d_volumes[cube_idx] = d_mc_volumes[d_cubes[cube_idx]] * cube_volume;
 }
 
-__global__ void d_update_triangles(float* d_triangles, const uint8_t* d_cubes,
+__global__ void d_update_triangles(float* d_triangles,
+                                   uint8_t* d_triangles_number,
+                                   const uint8_t* d_cubes,
                                    int8_t* d_mc_triangles, const double x_size,
                                    const double y_size, const double z_size) {
   uint32_t cube_idx = blockIdx.x * gridDim.y * blockDim.x +
@@ -132,6 +103,7 @@ __global__ void d_update_triangles(float* d_triangles, const uint8_t* d_cubes,
   float x = x_size;
   float y = y_size;
   float z = z_size;
+
   uint8_t j = 0;
   while (v[j] != -1) {
     switch (v[j]) {
@@ -199,8 +171,9 @@ __global__ void d_update_triangles(float* d_triangles, const uint8_t* d_cubes,
     d_triangles[cube_idx * 5 * 3 * 3 + j * 3 + 0] = blockIdx.x * x_size + x;
     d_triangles[cube_idx * 5 * 3 * 3 + j * 3 + 1] = blockIdx.y * y_size + y;
     d_triangles[cube_idx * 5 * 3 * 3 + j * 3 + 2] = threadIdx.x * z_size + z;
-    j++;
+    ++j;
   }
+  d_triangles_number[cube_idx] = j;
 }
 
 MarchingCubes::MarchingCubes(const uint32_t x_count, const uint32_t y_count,
@@ -215,6 +188,7 @@ MarchingCubes::MarchingCubes(const uint32_t x_count, const uint32_t y_count,
   d_triangles.resize(
       m_count.x * m_count.y * m_count.z * 5 * 3 *
       3);  // up to 5 faces each containing 3 vertices each containg x,y,z
+  d_triangles_number.resize(m_count.x * m_count.y * m_count.z);
 
   d_mc_volumes.resize(m_mc_volumes.size());
   thrust::copy(m_mc_volumes.cbegin(), m_mc_volumes.cend(), d_mc_volumes.data());
@@ -232,8 +206,6 @@ MarchingCubes::MarchingCubes(const uint32_t x_count, const uint32_t y_count,
   thrust::fill(d_cubes.begin(), d_cubes.end(), 0);
   thrust::fill(d_volumes.begin(), d_volumes.end(), 0.0);
 }
-
-MarchingCubes::~MarchingCubes() {}
 
 void MarchingCubes::set_heights_gpu(double height) {
   thrust::fill(d_heights.begin(), d_heights.end(), height);
@@ -266,6 +238,7 @@ void MarchingCubes::update_cubes_gpu() {
 void MarchingCubes::update_triangles_gpu() {
   d_update_triangles<<<dim3(m_count.x, m_count.y, 1), m_count.z>>>(
       thrust::raw_pointer_cast(d_triangles.data()),
+      thrust::raw_pointer_cast(d_triangles_number.data()),
       thrust::raw_pointer_cast(d_cubes.data()),
       thrust::raw_pointer_cast(d_mc_triangles.data()), m_cube_size.x,
       m_cube_size.y, m_cube_size.z);
@@ -273,15 +246,22 @@ void MarchingCubes::update_triangles_gpu() {
 }
 
 void MarchingCubes::shrink_triangles_gpu() {
-  auto s = thrust::count_if(thrust::device, d_triangles.cbegin(),
-                            d_triangles.cend(), is_non_zero());
-  d_triangles_shrinked.resize(s);
+  set_zero_kernel();
+  auto s = thrust::reduce(thrust::device, d_triangles_number.begin(),
+                          d_triangles_number.end(), 0);
+  d_triangles_shrinked.resize(s * 3);  // 3 vertex per each face
   thrust::copy_if(thrust::device, d_triangles.cbegin(), d_triangles.cend(),
-                  d_triangles_shrinked.begin(), is_non_zero());
+                  d_triangles_shrinked.begin(), is_valid());
 }
 
 void MarchingCubes::copy_triangles_from_gpu() {
   h_triangles_shrinked.resize(d_triangles_shrinked.size());
   thrust::copy(d_triangles_shrinked.cbegin(), d_triangles_shrinked.cend(),
                h_triangles_shrinked.begin());
+}
+
+void MarchingCubes::set_zero_kernel() {
+  d_set_zero<<<dim3(m_count.x, m_count.y, 1), m_count.z>>>(
+      thrust::raw_pointer_cast(d_triangles.data()));
+  cudaDeviceSynchronize();
 }

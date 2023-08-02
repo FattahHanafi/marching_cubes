@@ -24,12 +24,12 @@ class MarchingCubes {
   void shrink_triangles_gpu();
   void copy_triangles_from_gpu();
 
-  ~MarchingCubes();
+  void set_zero_kernel();
 
  private:
   cudaError_t m_cudaStat;
-  cublasStatus_t m_stat;
-  cublasHandle_t m_handle;
+  cublasStatus_t m_cuStat;
+  cublasHandle_t m_cuHandle;
 
   const Vec3<uint32_t> m_count;
   const Vec3<double> m_cube_size;
@@ -44,6 +44,8 @@ class MarchingCubes {
   thrust::device_vector<float> d_triangles_shrinked;
   thrust::device_vector<double> d_mc_volumes;
   thrust::device_vector<int8_t> d_mc_triangles;
+  thrust::device_vector<uint8_t> d_triangles_number;
+
   std::vector<double> m_mc_volumes = {
       0.00000000, 0.02083333, 0.02083333, 0.12500000, 0.02083333, 0.04166667,
       0.12500000, 0.35416667, 0.02083333, 0.12500000, 0.04166667, 0.35416667,
