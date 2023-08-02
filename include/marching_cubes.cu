@@ -1,5 +1,6 @@
 #include <cuda.h>
 #include <cuda_device_runtime_api.h>
+#include <cuda_runtime.h>
 #include <cuda_runtime_api.h>
 #include <sys/types.h>
 #include <thrust/copy.h>
@@ -25,13 +26,6 @@
 #include <numeric>
 #include <ostream>
 #include <vector>
-
-#define IDX2C(i, j, ld) (((j) * (ld)) + (i))
-#include <cuda_runtime.h>
-
-#include "cublas_v2.h"
-#define M 6
-#define N 5
 
 #include "marching_cubes.hpp"
 

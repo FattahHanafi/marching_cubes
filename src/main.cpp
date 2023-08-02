@@ -3,6 +3,7 @@
 #include <iostream>
 #include <thread>
 
+#include "../include/image_processing.hpp"
 #include "../include/marching_cubes.hpp"
 #include "../include/timer.hpp"
 
@@ -48,6 +49,11 @@ int main() {
     {
       Timer t("Copy triangles", TimeUnit::TIME_UNIT_μS);
       mc.copy_triangles_from_gpu();
+    }
+
+    {
+      Timer t("Image Processing", TimeUnit::TIME_UNIT_μS);
+      ImageProcessing ip = ImageProcessing(800, 480);
     }
   }
 }
