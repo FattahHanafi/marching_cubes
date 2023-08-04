@@ -1,13 +1,19 @@
 #pragma once
-#include <cublas_v2.h>
 #include <cuda.h>
+#include <cuda_device_runtime_api.h>
 #include <cuda_runtime.h>
+#include <cuda_runtime_api.h>
+#include <sys/types.h>
+#include <thrust/copy.h>
+#include <thrust/count.h>
 #include <thrust/device_vector.h>
 #include <thrust/execution_policy.h>
+#include <thrust/fill.h>
 #include <thrust/host_vector.h>
-#include <vector_types.h>
+#include <thrust/reduce.h>
 
-#include <cstdint>
+#include <algorithm>
+#include <iostream>
 #include <vector>
 
 #include "Vec3.hpp"
@@ -28,8 +34,6 @@ class MarchingCubes {
 
  private:
   cudaError_t m_cudaStat;
-  cublasStatus_t m_cuStat;
-  cublasHandle_t m_cuHandle;
 
   const Vec3<uint32_t> m_count;
   const Vec3<double> m_cube_size;

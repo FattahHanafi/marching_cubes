@@ -1,32 +1,3 @@
-#include <cuda.h>
-#include <cuda_device_runtime_api.h>
-#include <cuda_runtime.h>
-#include <cuda_runtime_api.h>
-#include <sys/types.h>
-#include <thrust/copy.h>
-#include <thrust/count.h>
-#include <thrust/detail/copy.h>
-#include <thrust/detail/raw_pointer_cast.h>
-#include <thrust/device_vector.h>
-#include <thrust/execution_policy.h>
-#include <thrust/fill.h>
-#include <thrust/functional.h>
-#include <thrust/iterator/counting_iterator.h>
-#include <thrust/iterator/permutation_iterator.h>
-#include <thrust/iterator/transform_iterator.h>
-#include <thrust/reduce.h>
-
-#include <algorithm>
-#include <cstdint>
-#include <cstdlib>
-#include <cstring>
-#include <iostream>
-#include <iterator>
-#include <limits>
-#include <numeric>
-#include <ostream>
-#include <vector>
-
 #include "marching_cubes.hpp"
 
 struct is_valid {
