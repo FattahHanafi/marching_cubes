@@ -8,12 +8,15 @@
 #include <thrust/reduce.h>
 
 #include <algorithm>
+#include <cstdint>
+#include <string>
 
 #include "Vec2.hpp"
 
 class ImageProcessing {
  public:
-  ImageProcessing(const uint32_t width, const uint32_t height, const uint32_t P, const uint32_t N);
+  ImageProcessing(const uint32_t width, const uint32_t height, const uint32_t P,
+                  const uint32_t N);
   void evaluate_pixels();
   void set_p(float p);
   void update_raw_pixels();
@@ -21,6 +24,11 @@ class ImageProcessing {
   float evaluate_error();
 
   void fill_raw_pixels(float value);
+  void next_iteration(const float max_alpha);
+
+  void savefile(const std::string name);
+
+  void print();
 
  private:
   const Vec2<uint32_t> m_size;
@@ -29,6 +37,7 @@ class ImageProcessing {
 
   thrust::device_vector<float> d_pixels;
   thrust::device_vector<bool> d_is_valid;
+  thrust::device_vector<uint32_t> d_nums;
   thrust::device_vector<float> d_raw_pixels;
   thrust::device_vector<float> d_J;
   thrust::device_vector<float> d_error;
@@ -38,4 +47,5 @@ class ImageProcessing {
   thrust::device_vector<float> d_U;
   thrust::device_vector<float> d_A;
   thrust::device_vector<float> d_P;
+  thrust::device_vector<float> d_GD;
 };

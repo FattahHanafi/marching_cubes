@@ -1,4 +1,6 @@
+#include <cstdint>
 #include <iostream>
+#include <string>
 
 #include "../include/image_processing.hpp"
 #include "../include/marching_cubes.hpp"
@@ -16,12 +18,12 @@ int main() {
     std::cout << "===========================\n";
     {
       Timer t("Set P", TimeUnit::TIME_UNIT_μS);
-      ip.set_p(1.26f);
+      ip.set_p(3.5f);
     }
 
     {
       Timer t("Set raw", TimeUnit::TIME_UNIT_μS);
-      ip.fill_raw_pixels(1.25f);
+      ip.fill_raw_pixels(100.25f);
     }
 
     {
@@ -39,5 +41,18 @@ int main() {
       float er = ip.evaluate_error();
       std::cout << "err = " << er << std::endl;
     }
+
+    {
+      Timer t("Next Iterate", TimeUnit::TIME_UNIT_μS);
+      for (uint32_t i = 0; i < 100; ++i) {
+        // ip.savefile("file" + std::to_string(i) + ".m");
+        ip.evaluate_pixels();
+        ip.evaluate_error();
+        // std::cout << er << '\n';
+        ip.next_iteration(1.0f);
+      }
+    }
+
+    // ip.print();
   }
 }
